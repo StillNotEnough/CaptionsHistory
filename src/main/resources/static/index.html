@@ -7,34 +7,38 @@
     <link rel="stylesheet" href="/css/styles.css">
 </head>
 <body>
-<div class="container">
-    <div class="header">
+<div class="phone-bg">
+  <div class="phone-frame">
+    <div class="notch"></div>
+    <div class="container">
+      <header class="header">
         <h1>🎙️ Voice Translator</h1>
-        <p>Real-time English to Spanish Translation</p>
-    </div>
-    <div class="controls">
-        <button id="startBtn" class="start-btn">Start Listening</button>
-        <button id="clearBtn" class="clear-btn">Clear History</button>
-        <div class="status" id="status" style="display: none;">
+        <p>Real-time English to Spanish</p>
+      </header>
+      <main>
+        <section class="controls">
+          <button id="startBtn" class="start-btn">Start</button>
+          <button id="clearBtn" class="clear-btn">Clear</button>
+          <div class="status" id="status" style="display: none;">
             <div class="status-indicator"></div>
             <span id="statusText">Ready to listen...</span>
-        </div>
-    </div>
-    <div id="currentRecognition" class="current-recognition" style="display: none;">
-        <strong>Currently speaking:</strong> <span id="currentText"></span>
-    </div>
-    <div class="transcription-feed" id="transcriptionFeed">
-        <div class="empty-state">
-            <div style="font-size: 4em; margin-bottom: 20px;">🎯</div>
+          </div>
+        </section>
+        <section id="currentRecognition" class="current-recognition" style="display: none;">
+          <strong>Currently speaking:</strong> <span id="currentText"></span>
+        </section>
+        <section class="transcription-feed" id="transcriptionFeed">
+          <div class="empty-state">
+            <div style="font-size: 3em; margin-bottom: 16px;">🎯</div>
             <h3>Ready to translate!</h3>
-            <p>Press "Start Listening" and begin speaking in English.<br>
-                Your speech will be transcribed and translated to Spanish in real-time.</p>
-        </div>
+            <p>Press "Start" and begin speaking in English.<br>Your speech will be transcribed and translated to Spanish in real-time.</p>
+          </div>
+        </section>
+      </main>
     </div>
+  </div>
 </div>
-<div id="connectionStatus" class="connection-status disconnected">
-    Disconnected
-</div>
+<div id="connectionStatus" class="connection-status disconnected">Disconnected</div>
 <script src="/js/script.js"></script>
 </body>
 </html>
