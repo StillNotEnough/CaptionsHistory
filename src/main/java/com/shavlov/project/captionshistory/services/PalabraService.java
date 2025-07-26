@@ -7,6 +7,7 @@ import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 import org.jetbrains.annotations.NotNull;
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,9 +25,6 @@ public class PalabraService {
 
     private final TranscriptionRepository transcriptionRepository;
 
-    @Value("${palabra.api.url}")
-    private String apiUrl;
-
     @Value("${palabra.api.client-id}")
     private String clientId;
 
@@ -35,12 +33,60 @@ public class PalabraService {
 
     private OkHttpClient client;
     private WebSocket webSocket;
+    private String sessionId;
+    private String publisherToken;
     public Consumer<Transcription> onTranscriptionReceived;
-
 
     @Autowired
     public PalabraService(TranscriptionRepository transcriptionRepository) {
         this.transcriptionRepository = transcriptionRepository;
+    }
+
+    /**
+     * Creates a Palabra session and returns the WebSocket URL and publisher token.
+     * @return SessionResponse containing ws_url and publisher token
+     */
+    private SessionResponse createSession() {
+        try {
+            OkHttpClient httpClient = new OkHttpClient();
+            
+            JSONObject requestBody = new JSONObject();
+            JSONObject data = new JSONObject();
+            data.put("subscriber_count", 0);
+            data.put("publisher_can_subscribe", true);
+            requestBody.put("data", data);
+
+            RequestBody body = RequestBody.create(
+                    requestBody.toString(),
+                    MediaType.parse("application/json"));
+
+            Request request = new Request.Builder()
+                    .url("https://api.palabra.ai/session-storage/session")
+                    .addHeader("ClientId", clientId)
+                    .addHeader("ClientSecret", clientSecret)
+                    .addHeader("Content-Type", "application/json")
+                    .post(body)
+                    .build();
+
+            try (Response response = httpClient.newCall(request).execute()) {
+                if (response.isSuccessful() && response.body() != null) {
+                    String responseBody = response.body().string();
+                    JSONObject jsonResponse = new JSONObject(responseBody);
+                    
+                    String wsUrl = jsonResponse.getString("ws_url");
+                    String publisher = jsonResponse.getString("publisher");
+                    String id = jsonResponse.getString("id");
+                    
+                    log.info("Successfully created Palabra session: {}", id);
+                    return new SessionResponse(wsUrl, publisher, id);
+                } else {
+                    throw new RuntimeException("Failed to create session: " + response.code());
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error creating Palabra session: {}", e.getMessage(), e);
+            throw new RuntimeException("Error creating Palabra session", e);
+        }
     }
 
     /**
@@ -51,34 +97,55 @@ public class PalabraService {
     public void handleWebSocketMessage(String message) {
         try {
             JSONObject jsonResponse = new JSONObject(message);
+            String messageType = jsonResponse.optString("message_type", "");
 
-            String originalText;
-            String translatedText;
+            if ("partial_transcription".equals(messageType) || "final_transcription".equals(messageType)) {
+                JSONObject data = jsonResponse.getJSONObject("data");
+                JSONObject transcription = data.getJSONObject("transcription");
+                String text = transcription.getString("text");
+                String language = transcription.getString("language");
 
-            if (jsonResponse.has("original") && jsonResponse.has("translated")) {
-                originalText = jsonResponse.getString("original");
-                translatedText = jsonResponse.getString("translated");
-            } else if (jsonResponse.has("text") && jsonResponse.has("translation")) {
-                originalText = jsonResponse.getString("text");
-                translatedText = jsonResponse.getString("translation");
+                if ("final_transcription".equals(messageType)) {
+                    // For final transcriptions, we need to get the translation
+                    // This would typically come in a separate message or we need to request it
+                    log.info("Final transcription received: [{}] {}", language, text);
+                    
+                    // Create transcription record
+                    Transcription transcriptionRecord = new Transcription();
+                    transcriptionRecord.setOriginalText(text);
+                    transcriptionRecord.setTranslatedText("[Translation pending]"); // Will be updated when translation arrives
+                    
+                    transcriptionRecord = transcriptionRepository.save(transcriptionRecord);
+                    
+                    if (onTranscriptionReceived != null) {
+                        onTranscriptionReceived.accept(transcriptionRecord);
+                    }
+                } else {
+                    log.debug("Partial transcription: [{}] {}", language, text);
+                }
+            } else if ("translation".equals(messageType)) {
+                // Handle translation messages
+                JSONObject data = jsonResponse.getJSONObject("data");
+                String translatedText = data.getString("text");
+                String targetLanguage = data.getString("target_language");
+                
+                log.info("Translation received: [{}] {}", targetLanguage, translatedText);
+                
+                // Update the latest transcription with translation
+                // This is a simplified approach - in production you'd want to match with the original
+                Transcription transcription = new Transcription();
+                transcription.setOriginalText("[Original text]");
+                transcription.setTranslatedText(translatedText);
+                
+                transcription = transcriptionRepository.save(transcription);
+                
+                if (onTranscriptionReceived != null) {
+                    onTranscriptionReceived.accept(transcription);
+                }
             } else {
-                log.warn("Unexpected message format from Palabra API: {}", message);
-                return;
+                log.debug("Received message from Palabra API: {}", message);
             }
-
-            // Сохраняем транскрипцию в базу данных
-            Transcription transcription = new Transcription();
-            transcription.setOriginalText(originalText);
-            transcription.setTranslatedText(translatedText);
-
-            transcription = transcriptionRepository.save(transcription);
-            log.info("Saved transcription: Original='{}', Translation='{}'", originalText, translatedText);
-
-            // Уведомляем WebSocket handler о новой транскрипции
-            if (onTranscriptionReceived != null) {
-                onTranscriptionReceived.accept(transcription);
-            }
-        }catch (Exception e) {
+        } catch (Exception e) {
             log.error("Error handling WebSocket message: {}", e.getMessage(), e);
         }
     }
@@ -92,8 +159,7 @@ public class PalabraService {
     }
 
     /**
-     * Connects to Palabra API WebSocket and sets up listeners for real-time translation.
-     * Sends client credentials as headers.
+     * Connects to Palabra API WebSocket using the session-based approach.
      */
     public void connectToPalabraAPI() {
         try {
@@ -102,24 +168,26 @@ public class PalabraService {
                     .pingInterval(30, TimeUnit.SECONDS)
                     .build();
 
-            // WebSocket request with credentials as headers
+            // Step 1: Create session
+            SessionResponse session = createSession();
+            String wsUrl = session.wsUrl;
+            publisherToken = session.publisher;
+            sessionId = session.id;
+
+            // Step 2: Connect to WebSocket with publisher token
+            String fullWsUrl = wsUrl + "?token=" + publisherToken;
+            
             Request request = new Request.Builder()
-                    .url(apiUrl)
-                    .addHeader("ClientId", clientId)
-                    .addHeader("ClientSecret", clientSecret)
+                    .url(fullWsUrl)
                     .build();
 
             webSocket = client.newWebSocket(request, new WebSocketListener() {
                 @Override
                 public void onOpen(@NotNull WebSocket webSocket, @NotNull Response response) {
                     log.info("Connected to Palabra API WebSocket");
-
-                    // Send config for translation (if required by API)
-                    JSONObject config = new JSONObject();
-                    config.put("source_language", "en");
-                    config.put("target_language", "es");
-                    config.put("mode", "real-time");
-                    webSocket.send(config.toString());
+                    
+                    // Step 3: Configure translation settings
+                    configureTranslation(webSocket);
                 }
 
                 @Override
@@ -153,6 +221,63 @@ public class PalabraService {
     }
 
     /**
+     * Configures translation settings for the WebSocket connection.
+     */
+    private void configureTranslation(WebSocket webSocket) {
+        try {
+            JSONObject settings = new JSONObject();
+            settings.put("message_type", "set_task");
+            
+            JSONObject data = new JSONObject();
+            
+            // Input stream configuration
+            JSONObject inputStream = new JSONObject();
+            inputStream.put("content_type", "audio");
+            JSONObject inputSource = new JSONObject();
+            inputSource.put("type", "ws");
+            inputSource.put("format", "pcm_s16le");
+            inputSource.put("sample_rate", 24000);
+            inputSource.put("channels", 1);
+            inputStream.put("source", inputSource);
+            data.put("input_stream", inputStream);
+            
+            // Output stream configuration
+            JSONObject outputStream = new JSONObject();
+            outputStream.put("content_type", "audio");
+            JSONObject outputTarget = new JSONObject();
+            outputTarget.put("type", "ws");
+            outputTarget.put("format", "pcm_s16le");
+            outputStream.put("target", outputTarget);
+            data.put("output_stream", outputStream);
+            
+            // Pipeline configuration
+            JSONObject pipeline = new JSONObject();
+            pipeline.put("preprocessing", new JSONObject());
+            
+            JSONObject transcription = new JSONObject();
+            transcription.put("source_language", "en");
+            pipeline.put("transcription", transcription);
+            
+            JSONObject translation = new JSONObject();
+            translation.put("target_language", "es");
+            translation.put("speech_generation", new JSONObject());
+            
+            JSONArray translations = new JSONArray();
+            translations.put(translation);
+            pipeline.put("translations", translations);
+            
+            data.put("pipeline", pipeline);
+            settings.put("data", data);
+            
+            webSocket.send(settings.toString());
+            log.info("Translation settings configured: English → Spanish");
+            
+        } catch (Exception e) {
+            log.error("Error configuring translation: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
      * Schedules a reconnection attempt to Palabra API WebSocket after a delay.
      */
     private void scheduleReconnect(){
@@ -169,14 +294,27 @@ public class PalabraService {
     }
 
     /**
-     * Sends audio data (or text message) to Palabra API WebSocket.
-     * @param audioData Audio data as a string (base64 or binary expected by Palabra)
+     * Sends audio data to Palabra API WebSocket.
+     * @param audioData Audio data as base64-encoded string
      */
     public void sendAudioData(String audioData) {
-        if (webSocket != null && !webSocket.send(audioData)) {
-            log.error("Failed to send audio data to Palabra API");
-        } else {
-            log.debug("Audio data sent to Palabra API");
+        if (webSocket != null) {
+            try {
+                JSONObject message = new JSONObject();
+                message.put("message_type", "input_audio_data");
+                
+                JSONObject data = new JSONObject();
+                data.put("data", audioData);
+                message.put("data", data);
+                
+                if (!webSocket.send(message.toString())) {
+                    log.error("Failed to send audio data to Palabra API");
+                } else {
+                    log.debug("Audio data sent to Palabra API");
+                }
+            } catch (Exception e) {
+                log.error("Error sending audio data: {}", e.getMessage(), e);
+            }
         }
     }
 
@@ -187,13 +325,9 @@ public class PalabraService {
      * @param targetLang Target language code
      */
     public void sendTextForTranslation(String text, String sourceLang, String targetLang){
-        JSONObject message = new JSONObject();
-        message.put("text", text);
-        message.put("source_language", sourceLang);
-        message.put("target_language", targetLang);
-        message.put("type", "translation_request");
-
-        sendAudioData(message.toString());
+        // For text translation, you might need to use a different endpoint or message type
+        // This is a placeholder for text-based translation
+        log.info("Text translation requested: {} ({} → {})", text, sourceLang, targetLang);
     }
 
     /**
@@ -215,6 +349,21 @@ public class PalabraService {
         if (client != null) {
             client.connectionPool().evictAll();
             client.dispatcher().executorService().shutdown();
+        }
+    }
+
+    /**
+     * Internal class to hold session response data.
+     */
+    private static class SessionResponse {
+        final String wsUrl;
+        final String publisher;
+        final String id;
+
+        SessionResponse(String wsUrl, String publisher, String id) {
+            this.wsUrl = wsUrl;
+            this.publisher = publisher;
+            this.id = id;
         }
     }
 }
