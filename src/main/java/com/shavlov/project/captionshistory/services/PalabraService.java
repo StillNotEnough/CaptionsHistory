@@ -72,11 +72,10 @@ public class PalabraService {
                 if (response.isSuccessful() && response.body() != null) {
                     String responseBody = response.body().string();
                     JSONObject jsonResponse = new JSONObject(responseBody);
-                    
-                    String wsUrl = jsonResponse.getString("ws_url");
-                    String publisher = jsonResponse.getString("publisher");
-                    String id = jsonResponse.getString("id");
-                    
+                    JSONObject dataObj = jsonResponse.getJSONObject("data");
+                    String wsUrl = dataObj.getString("ws_url");
+                    String publisher = dataObj.getString("publisher");
+                    String id = dataObj.getString("id");
                     log.info("Successfully created Palabra session: {}", id);
                     return new SessionResponse(wsUrl, publisher, id);
                 } else {
