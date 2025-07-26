@@ -111,18 +111,24 @@ class VoiceTranslator {
         }
     }
     startListening() {
+        if (this.isListening) return; // Prevent double start
         if (this.websocket?.readyState !== WebSocket.OPEN) {
             alert('WebSocket is not connected. Please wait for connection...');
             return;
         }
         this.isListening = true;
-        this.startBtn.textContent = 'Stop Listening';
+        this.startBtn.textContent = 'Stop';
         this.startBtn.classList.add('recording');
+        this.startBtn.disabled = true; // Disable to prevent double click
         this.recognition.start();
+        setTimeout(() => {
+            this.startBtn.disabled = false; // Re-enable after recognition starts
+        }, 500);
     }
     stopListening() {
+        if (!this.isListening) return; // Prevent double stop
         this.isListening = false;
-        this.startBtn.textContent = 'Start Listening';
+        this.startBtn.textContent = 'Start';
         this.startBtn.classList.remove('recording');
         this.recognition.stop();
         this.currentRecognition.style.display = 'none';
