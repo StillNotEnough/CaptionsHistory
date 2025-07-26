@@ -84,45 +84,6 @@ public class PalabraService {
     }
 
     /**
-     * Requests an OAuth access token from Palabra API using client credentials.
-     * @return Access token string
-     */
-    public String getAccessToken() {
-        OkHttpClient client = new OkHttpClient();
-
-        JSONObject jsonBody = new JSONObject();
-
-        jsonBody.put("client_id", clientId);
-        jsonBody.put("client_secret", clientSecret);
-        jsonBody.put("grant_type", "client_credentials"); // Тип гранта
-
-        RequestBody body = RequestBody.create(
-                jsonBody.toString(),
-                MediaType.parse("application/json"));
-
-        // Создаем POST-запрос
-        Request request = new Request.Builder()
-                .url("https://api.palabra.ai/auth") // URL для получения токена
-                .post(body)
-                .build();
-
-        try (Response response = client.newCall(request).execute()) {
-            if (response.isSuccessful() && response.body() != null) {
-                String responseBody = response.body().string();
-                JSONObject jsonResponse = new JSONObject(responseBody);
-                String token = jsonResponse.getString("access_token");
-                log.info("Successfully obtained access token");
-                return token;
-            } else {
-                throw new RuntimeException("Failed to obtain access token: " + response.code());
-            }
-        } catch (Exception e) {
-            log.error("Error while obtaining access token: {}", e.getMessage(), e);
-            throw new RuntimeException("Error while obtaining access token", e);
-        }
-    }
-
-    /**
      * Initializes the WebSocket connection to Palabra API on service startup.
      */
     @PostConstruct
@@ -132,20 +93,20 @@ public class PalabraService {
 
     /**
      * Connects to Palabra API WebSocket and sets up listeners for real-time translation.
+     * Sends client credentials as headers.
      */
     public void connectToPalabraAPI() {
         try {
             client = new OkHttpClient.Builder()
                     .readTimeout(0, TimeUnit.MILLISECONDS)
-                    .pingInterval(30, TimeUnit.SECONDS) // Добавляем ping для поддержания соединения
+                    .pingInterval(30, TimeUnit.SECONDS)
                     .build();
 
-            String accessToken = getAccessToken();
-
-            // WebSocket запрос
+            // WebSocket request with credentials as headers
             Request request = new Request.Builder()
                     .url(apiUrl)
-                    .addHeader("Authorization", "Bearer " + accessToken)
+                    .addHeader("ClientId", clientId)
+                    .addHeader("ClientSecret", clientSecret)
                     .build();
 
             webSocket = client.newWebSocket(request, new WebSocketListener() {
@@ -153,12 +114,11 @@ public class PalabraService {
                 public void onOpen(@NotNull WebSocket webSocket, @NotNull Response response) {
                     log.info("Connected to Palabra API WebSocket");
 
-                    // Отправляем конфигурацию для перевода
+                    // Send config for translation (if required by API)
                     JSONObject config = new JSONObject();
                     config.put("source_language", "en");
                     config.put("target_language", "es");
                     config.put("mode", "real-time");
-
                     webSocket.send(config.toString());
                 }
 
@@ -177,15 +137,12 @@ public class PalabraService {
                 @Override
                 public void onClosed(@NotNull WebSocket webSocket, int code, String reason) {
                     log.info("WebSocket connection closed: {} - {}", code, reason);
-
-                    // Пытаемся переподключиться через 5 секунд
                     scheduleReconnect();
                 }
 
                 @Override
                 public void onFailure(WebSocket webSocket, Throwable t, Response response) {
                     log.error("WebSocket connection failed: {}", t.getMessage(), t);
-                    // Пытаемся переподключиться через 10 секунд
                     scheduleReconnect();
                 }
             });
