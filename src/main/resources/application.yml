@@ -1,0 +1,27 @@
+# Настройки сервера
+server:
+  port: 8080 # Порт, на котором будет работать приложение
+
+# Настройки базы данных
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/captionshistory_db # URL базы данных
+    username: postgres # Имя пользователя для доступа к БД
+    password: postgres # Пароль для доступа к БД
+    driver-class-name: org.postgresql.Driver # Драйвер для PostgreSQL
+
+  jpa:
+    hibernate:
+      ddl-auto: update # Автоматическое создание/обновление таблиц
+    show-sql: true # Вывод SQL-запросов в консоль
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect # Диалект для PostgreSQL
+        format_sql: true # Форматирование SQL-запросов для удобства чтения
+
+# Настройки Palabra API
+palabra:
+  api:
+    url: wss://api.palabra.ai/socket # WebSocket URL для подключения к Palabra API
+    client-id: 4e0b1cee7e48928b898e1e9e6d143894 # Ваш Client ID
+    client-secret: 0e216c4481289c6b23998b7fb244795e33e563812e00e712428349adae9804aa # Ваш Client Secret
