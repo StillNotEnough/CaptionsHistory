@@ -6,7 +6,7 @@ class SpeechTranslator {
         this.isRecording = false;
         this.transcriptions = [];
         this.isRestarting = false;
-        
+
         this.initializeElements();
         this.initializeWebSocket();
         this.initializeSpeechRecognition();
@@ -57,7 +57,7 @@ class SpeechTranslator {
         if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             this.recognition = new SpeechRecognition();
-            
+
             this.recognition.continuous = true;
             this.recognition.interimResults = true;
             this.recognition.lang = 'en-US';
@@ -183,7 +183,7 @@ class SpeechTranslator {
     addTranscriptionToHistory(transcription) {
         const card = document.createElement('div');
         card.className = 'transcription-card';
-        
+
         card.innerHTML = `
             <div class="transcription-header">
                 <span class="language-label">🇺🇸 English</span>
@@ -225,7 +225,7 @@ class SpeechTranslator {
                 ...t,
                 timestamp: new Date(t.timestamp)
             }));
-            
+
             this.transcriptions.forEach(t => this.addTranscriptionToHistory(t));
         }
     }
@@ -242,7 +242,7 @@ class SpeechTranslator {
         document.body.appendChild(toast);
 
         setTimeout(() => toast.classList.add('show'), 100);
-        
+
         setTimeout(() => {
             toast.classList.remove('show');
             setTimeout(() => document.body.removeChild(toast), 300);
