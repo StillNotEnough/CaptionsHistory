@@ -1,28 +1,30 @@
 // script.js
-class VoiceTranslator {
+class SpeechTranslator {
     constructor() {
-        this.isListening = false;
-        this.websocket = null;
         this.recognition = null;
-        this.transcriptionHistory = [];
-        this.isRestarting = false; // Add flag to prevent restart loops
-        this.initElements();
-        this.initWebSocket();
-        this.initSpeechRecognition();
+        this.websocket = null;
+        this.isRecording = false;
+        this.transcriptions = [];
+        this.isRestarting = false;
+        
+        this.initializeElements();
+        this.initializeWebSocket();
+        this.initializeSpeechRecognition();
+        this.bindEvents();
+        this.loadHistory();
     }
-    initElements() {
+
+    initializeElements() {
         this.startBtn = document.getElementById('startBtn');
+        this.stopBtn = document.getElementById('stopBtn');
         this.clearBtn = document.getElementById('clearBtn');
-        this.status = document.getElementById('status');
-        this.statusText = document.getElementById('statusText');
-        this.transcriptionFeed = document.getElementById('transcriptionFeed');
-        this.connectionStatus = document.getElementById('connectionStatus');
-        this.currentRecognition = document.getElementById('currentRecognition');
+        this.recordingIndicator = document.getElementById('recordingIndicator');
         this.currentText = document.getElementById('currentText');
-        this.startBtn.addEventListener('click', () => this.toggleListening());
-        this.clearBtn.addEventListener('click', () => this.clearHistory());
+        this.historyContainer = document.getElementById('historyContainer');
+        this.connectionStatus = document.getElementById('connectionStatus');
     }
-    initWebSocket() {
+
+    initializeWebSocket() {
         const wsUrl = 'ws://localhost:8080/voice-translation';
         try {
             this.websocket = new WebSocket(wsUrl);
@@ -38,7 +40,7 @@ class VoiceTranslator {
                 console.log('WebSocket disconnected');
                 this.updateConnectionStatus('disconnected', 'Disconnected');
                 setTimeout(() => {
-                    this.initWebSocket();
+                    this.initializeWebSocket();
                 }, 3000);
             };
             this.websocket.onerror = (error) => {
@@ -50,93 +52,100 @@ class VoiceTranslator {
             this.updateConnectionStatus('disconnected', 'Connection Failed');
         }
     }
-    initSpeechRecognition() {
-        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-            alert('Speech recognition not supported in this browser. Please use Chrome or Edge.');
-            return;
-        }
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        this.recognition = new SpeechRecognition();
-        this.recognition.continuous = true;
-        this.recognition.interimResults = true;
-        this.recognition.lang = 'en-US';
-        this.recognition.onstart = () => {
-            console.log('Speech recognition started');
-            this.updateStatus(true, 'Listening...');
-        };
-        this.recognition.onresult = (event) => {
-            let interimTranscript = '';
-            let finalTranscript = '';
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-                const transcript = event.results[i][0].transcript;
-                if (event.results[i].isFinal) {
-                    finalTranscript += transcript;
-                } else {
-                    interimTranscript += transcript;
+
+    initializeSpeechRecognition() {
+        if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            this.recognition = new SpeechRecognition();
+            
+            this.recognition.continuous = true;
+            this.recognition.interimResults = true;
+            this.recognition.lang = 'en-US';
+
+            this.recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let finalTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript;
+                    } else {
+                        interimTranscript += transcript;
+                    }
                 }
-            }
-            if (interimTranscript) {
-                this.currentText.textContent = interimTranscript;
-                this.currentRecognition.style.display = 'block';
-            }
-            if (finalTranscript.trim()) {
-                this.currentRecognition.style.display = 'none';
-                this.sendForTranslation(finalTranscript.trim());
-            }
-        };
-        this.recognition.onerror = (event) => {
-            console.error('Speech recognition error:', event.error);
-            this.updateStatus(false, 'Recognition error: ' + event.error);
-        };
-        this.recognition.onend = () => {
-            console.log('Speech recognition ended');
-            if (this.isListening && !this.isRestarting) {
-                this.isRestarting = true;
-                setTimeout(() => {
-                    this.recognition.start();
-                    this.isRestarting = false;
-                }, 100);
-            } else {
-                this.updateStatus(false, 'Stopped listening');
-                this.currentRecognition.style.display = 'none';
-            }
-        };
-    }
-    toggleListening() {
-        if (!this.recognition) {
-            alert('Speech recognition is not available');
-            return;
-        }
-        if (this.isListening) {
-            this.stopListening();
+
+                this.currentText.textContent = finalTranscript + interimTranscript || 'Listening...';
+
+                if (finalTranscript) {
+                    this.sendForTranslation(finalTranscript.trim());
+                }
+            };
+
+            this.recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                this.showToast('Speech recognition error: ' + event.error, 'error');
+                this.stopRecording();
+            };
+
+            this.recognition.onend = () => {
+                console.log('Speech recognition ended');
+                if (this.isRecording && !this.isRestarting) {
+                    this.isRestarting = true;
+                    setTimeout(() => {
+                        this.recognition.start();
+                        this.isRestarting = false;
+                    }, 100);
+                } else {
+                    this.currentText.textContent = 'Click "Start Recording" to begin speaking...';
+                }
+            };
         } else {
-            this.startListening();
+            this.showToast('Speech recognition not supported in this browser', 'error');
+            this.startBtn.disabled = true;
         }
     }
-    startListening() {
-        if (this.isListening) return; // Prevent double start
+
+    bindEvents() {
+        this.startBtn.addEventListener('click', () => this.startRecording());
+        this.stopBtn.addEventListener('click', () => this.stopRecording());
+        this.clearBtn.addEventListener('click', () => this.clearHistory());
+    }
+
+    startRecording() {
+        if (!this.recognition) return;
+        if (this.isRecording) return;
+
         if (this.websocket?.readyState !== WebSocket.OPEN) {
-            alert('WebSocket is not connected. Please wait for connection...');
+            this.showToast('WebSocket is not connected. Please wait for connection...', 'error');
             return;
         }
-        this.isListening = true;
-        this.startBtn.textContent = 'Stop';
-        this.startBtn.classList.add('recording');
-        this.startBtn.disabled = true; // Disable to prevent double click
+
+        this.isRecording = true;
+        this.startBtn.disabled = true;
+        this.stopBtn.disabled = false;
+        this.recordingIndicator.classList.add('active');
+        this.currentText.textContent = 'Listening...';
+
         this.recognition.start();
-        setTimeout(() => {
-            this.startBtn.disabled = false; // Re-enable after recognition starts
-        }, 500);
+        this.showToast('Recording started');
     }
-    stopListening() {
-        if (!this.isListening) return; // Prevent double stop
-        this.isListening = false;
-        this.isRestarting = false; // Reset restart flag
-        this.startBtn.textContent = 'Start';
-        this.startBtn.classList.remove('recording');
+
+    stopRecording() {
+        if (!this.recognition) return;
+        if (!this.isRecording) return;
+
+        this.isRecording = false;
+        this.isRestarting = false;
+        this.startBtn.disabled = false;
+        this.stopBtn.disabled = true;
+        this.recordingIndicator.classList.remove('active');
+        this.currentText.textContent = 'Click "Start Recording" to begin speaking...';
+
         this.recognition.stop();
-        this.currentRecognition.style.display = 'none';
+        this.showToast('Recording stopped');
     }
+
     sendForTranslation(text) {
         if (this.websocket?.readyState === WebSocket.OPEN) {
             const message = {
@@ -150,65 +159,98 @@ class VoiceTranslator {
             console.log('Sent for translation:', text);
         } else {
             console.error('WebSocket not connected');
-            alert('Connection lost. Please wait for reconnection...');
+            this.showToast('Connection lost. Please wait for reconnection...', 'error');
         }
     }
+
     handleTranslationResponse(data) {
         if (data.type === 'TRANSLATION_RESULT') {
-            this.addTranscriptionItem({
-                originalText: data.originalText,
-                translatedText: data.translatedText,
+            const transcription = {
+                english: data.originalText,
+                spanish: data.translatedText,
                 timestamp: new Date(data.timestamp)
-            });
+            };
+
+            this.transcriptions.push(transcription);
+            this.saveHistory();
+            this.addTranscriptionToHistory(transcription);
         } else if (data.type === 'ERROR') {
             console.error('Translation error:', data.message);
-            alert('Translation error: ' + data.message);
+            this.showToast('Translation error: ' + data.message, 'error');
         }
     }
-    addTranscriptionItem(item) {
-        const emptyState = this.transcriptionFeed.querySelector('.empty-state');
-        if (emptyState) {
-            emptyState.remove();
-        }
-        const transcriptionItem = document.createElement('div');
-        transcriptionItem.className = 'transcription-item';
-        transcriptionItem.innerHTML = `
-            <div class="timestamp">
-                ${item.timestamp.toLocaleTimeString()}
+
+    addTranscriptionToHistory(transcription) {
+        const card = document.createElement('div');
+        card.className = 'transcription-card';
+        
+        card.innerHTML = `
+            <div class="transcription-header">
+                <span class="language-label">🇺🇸 English</span>
+                <span class="timestamp">${this.formatTime(transcription.timestamp)}</span>
             </div>
-            <div class="original-text">
-                <div class="label">English (Original)</div>
-                <div class="text-content">${item.originalText}</div>
+            <div class="transcription-text">${transcription.english}</div>
+            <div class="transcription-header">
+                <span class="language-label">🇪🇸 Spanish</span>
             </div>
-            <div class="translated-text">
-                <div class="label">Español (Translation)</div>
-                <div class="text-content">${item.translatedText}</div>
-            </div>
+            <div class="translation-text">${transcription.spanish}</div>
         `;
-        this.transcriptionFeed.appendChild(transcriptionItem);
-        this.transcriptionHistory.push(item);
-        this.transcriptionFeed.scrollTop = this.transcriptionFeed.scrollHeight;
+
+        this.historyContainer.appendChild(card);
+        this.historyContainer.scrollTop = this.historyContainer.scrollHeight;
     }
+
+    formatTime(date) {
+        return date.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
     clearHistory() {
-        this.transcriptionHistory = [];
-        this.transcriptionFeed.innerHTML = `
-            <div class="empty-state">
-                <div style="    font-size: 4em; margin-bottom: 20px;">🎯</div>
-                <h3>Ready to translate!</h3>
-                <p>Press "Start Listening" and begin speaking in English.<br>
-                Your speech will be transcribed and translated to Spanish in real-time.</p>
-            </div>
-        `;
+        this.transcriptions = [];
+        this.historyContainer.innerHTML = '';
+        localStorage.removeItem('transcription_history');
+        this.showToast('History cleared');
     }
-    updateStatus(isActive, text) {
-        this.statusText.textContent = text;
-        this.status.style.display = isActive ? 'inline-flex' : 'none';
+
+    saveHistory() {
+        localStorage.setItem('transcription_history', JSON.stringify(this.transcriptions));
     }
+
+    loadHistory() {
+        const saved = localStorage.getItem('transcription_history');
+        if (saved) {
+            this.transcriptions = JSON.parse(saved).map(t => ({
+                ...t,
+                timestamp: new Date(t.timestamp)
+            }));
+            
+            this.transcriptions.forEach(t => this.addTranscriptionToHistory(t));
+        }
+    }
+
     updateConnectionStatus(status, text) {
         this.connectionStatus.textContent = text;
         this.connectionStatus.className = `connection-status ${status}`;
     }
+
+    showToast(message, type = 'success') {
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+
+        setTimeout(() => toast.classList.add('show'), 100);
+        
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => document.body.removeChild(toast), 300);
+        }, 3000);
+    }
 }
+
+// Initialize the app when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-    new VoiceTranslator();
+    new SpeechTranslator();
 });
