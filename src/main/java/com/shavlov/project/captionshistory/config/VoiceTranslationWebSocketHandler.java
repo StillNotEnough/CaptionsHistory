@@ -16,8 +16,8 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.util.*;
 
-@Component
 @Slf4j
+@Component
 public class VoiceTranslationWebSocketHandler extends TextWebSocketHandler {
 
     private final PalabraService palabraService;

@@ -5,6 +5,7 @@ class VoiceTranslator {
         this.websocket = null;
         this.recognition = null;
         this.transcriptionHistory = [];
+        this.isRestarting = false; // Add flag to prevent restart loops
         this.initElements();
         this.initWebSocket();
         this.initSpeechRecognition();
@@ -89,9 +90,11 @@ class VoiceTranslator {
         };
         this.recognition.onend = () => {
             console.log('Speech recognition ended');
-            if (this.isListening) {
+            if (this.isListening && !this.isRestarting) {
+                this.isRestarting = true;
                 setTimeout(() => {
                     this.recognition.start();
+                    this.isRestarting = false;
                 }, 100);
             } else {
                 this.updateStatus(false, 'Stopped listening');
@@ -128,6 +131,7 @@ class VoiceTranslator {
     stopListening() {
         if (!this.isListening) return; // Prevent double stop
         this.isListening = false;
+        this.isRestarting = false; // Reset restart flag
         this.startBtn.textContent = 'Start';
         this.startBtn.classList.remove('recording');
         this.recognition.stop();
